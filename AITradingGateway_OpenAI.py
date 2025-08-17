@@ -22,6 +22,7 @@ from typing import Any, Dict
 
 from fastapi import FastAPI, HTTPException, Request
 from openai import OpenAI
+import httpx
 
 
 # Configure logging so that debugging information is visible in Railway
@@ -39,10 +40,19 @@ if not OPENAI_API_KEY:
 # The OpenAI library as of v1.0.0 no longer exposes ChatCompletion directly on the top
 # level package.  Instead, a client instance is created which holds the API
 # key and endpoints (see https://github.com/openai/openai-python for details).
+# If HTTPS_PROXY or HTTP_PROXY is defined in the environment we create an
+# httpx.Client configured with the proxy and pass it to OpenAI.  This avoids
+# passing unsupported `proxies` arguments to OpenAI client constructor.
 client: OpenAI | None = None
 try:
     if OPENAI_API_KEY:
-        client = OpenAI(api_key=OPENAI_API_KEY)
+        proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+        if proxy:
+            # Create a custom httpx client using the proxy for outgoing requests.
+            http_client = httpx.Client(proxy=proxy, timeout=30.0)
+            client = OpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
+        else:
+            client = OpenAI(api_key=OPENAI_API_KEY)
 except Exception as exc:
     logger.error("Failed to initialise OpenAI client: %s", exc)
     client = None
