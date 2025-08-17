@@ -21,7 +21,7 @@ import logging
 from typing import Any, Dict
 
 from fastapi import FastAPI, HTTPException, Request
-import openai
+from openai import OpenAI
 
 
 # Configure logging so that debugging information is visible in Railway
@@ -31,8 +31,22 @@ logger = logging.getLogger(__name__)
 # Load OpenAI API key and optional defaults from environment
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
-    logger.warning("OPENAI_API_KEY is not set. The gateway will not be able to call OpenAI")
-openai.api_key = OPENAI_API_KEY
+    logger.warning(
+        "OPENAI_API_KEY is not set. The gateway will not be able to call OpenAI"
+    )
+
+# Initialise the OpenAI client using the new v1 API interface.
+# The OpenAI library as of v1.0.0 no longer exposes ChatCompletion directly on the top
+# level package.  Instead, a client instance is created which holds the API
+# key and endpoints (see https://github.com/openai/openai-python for details).
+client: OpenAI | None = None
+try:
+    if OPENAI_API_KEY:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+except Exception as exc:
+    logger.error("Failed to initialise OpenAI client: %s", exc)
+    client = None
+
 MODEL_NAME = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN")
 
@@ -97,8 +111,15 @@ async def decide(request: Request) -> Dict[str, str]:
         {"role": "user", "content": content},
     ]
 
+    # Use the new OpenAI client to call chat completions.  In v1 the
+    # chat endpoint is accessed via client.chat.completions.create().
+    if client is None:
+        logger.error("OpenAI client is not initialised; returning flat decision")
+        return {
+            "decision": "action=flat;sl_pips=0;tp_pips=0;risk_pct=0;lots=0;regime=error;confidence=0;"
+        }
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
             temperature=0.0,
@@ -107,8 +128,13 @@ async def decide(request: Request) -> Dict[str, str]:
     except Exception as exc:
         logger.error("OpenAI call failed: %s", exc)
         # Fall back to flat decision on error
-        return {"decision": "action=flat;sl_pips=0;tp_pips=0;risk_pct=0;lots=0;regime=error;confidence=0;"}
+        return {
+            "decision": "action=flat;sl_pips=0;tp_pips=0;risk_pct=0;lots=0;regime=error;confidence=0;"
+        }
 
+    # Extract the assistant's content from the response.  Note: the new API
+    # returns a ChatCompletionResponse object with a list of choices and
+    # nested message objects.
     content_raw = response.choices[0].message.content.strip()
     logger.info("Raw response from OpenAI: %s", content_raw)
 
