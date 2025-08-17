@@ -1,0 +1,12 @@
+{
+  "services": [
+    {
+      "name": "ai-gateway",
+      "project": "self",
+      "variables": {
+        "OPENAI_MODEL": "gpt-4o-mini",
+        "AUTH_TOKEN": ""
+      }
+    }
+  ]
+}
